@@ -1,5 +1,5 @@
 /* =============================================================================
- * Japa Counter — app.js (v3: username-as-identity)
+ * Naam Jap — app.js (v3: username-as-identity)
  *
  * Backend: dynamic bbolt-crud REST on https://dyn.duranz.in (or localhost).
  *
