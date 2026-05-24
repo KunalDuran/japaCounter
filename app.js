@@ -33,6 +33,16 @@ const LS_USER_KEY = 'japa.userKey';        // lookup key (lowercased name)
 const LS_USER_NAME = 'japa.userName';      // original-case display name
 const LS_RANGE = 'japa.range';
 
+// Beads page settings
+const BEADS_PER_MALA = 108;
+const LS_BEAD_COUNT = 'japa.beadCount';    // in-progress beads in current mala
+const LS_BEAD_DATE = 'japa.beadDate';      // date that count belongs to
+const LS_SOUND_ON = 'japa.soundOn';
+const LS_HAPTICS_ON = 'japa.hapticsOn';
+const SWIPE_MIN_DISTANCE = 40;             // px — minimum upward travel
+const SWIPE_MIN_VELOCITY = 0.25;           // px/ms
+const SWIPE_DEBOUNCE_MS = 180;             // protect against double-fires
+
 // Username rules — letters, digits, spaces, underscore, hyphen, dot.
 // 2-30 chars. Adjust if you want to allow Devanagari, accents, etc.
 const USERNAME_RE = /^[A-Za-z0-9 _.\-]{2,30}$/;
@@ -141,6 +151,10 @@ let session = {
   myCount: 0,
   range: localStorage.getItem(LS_RANGE) || 'today',
   view: 'totals',
+  page: 'home',                            // 'home' | 'beads'
+  beadCount: 0,                            // 0..107 in current mala
+  soundOn: localStorage.getItem(LS_SOUND_ON) !== '0',
+  hapticsOn: localStorage.getItem(LS_HAPTICS_ON) !== '0',
 };
 
 // ----- DOM ------------------------------------------------------------------
@@ -149,6 +163,8 @@ const $ = (id) => document.getElementById(id);
 const els = {
   setupScreen: $('setup-screen'),
   appScreen: $('app-screen'),
+  beadsScreen: $('beads-screen'),
+  bottomNav: $('bottom-nav'),
   usernameInput: $('username-input'),
   startBtn: $('start-btn'),
   displayUsername: $('display-username'),
@@ -161,6 +177,18 @@ const els = {
   totalDevotees: $('total-devotees'),
   leaderboardList: $('leaderboard-list'),
   refreshStatus: $('refresh-status'),
+  // Beads page
+  beadsBackBtn: $('beads-back-btn'),
+  beadsMenuBtn: $('beads-menu-btn'),
+  beadsMalaNum: $('beads-mala-num'),
+  beadsUser: $('beads-user'),
+  beadStage: $('bead-stage'),
+  beadRingDots: $('bead-ring-dots'),
+  beadCount: $('bead-count'),
+  beadInstruction: $('bead-instruction'),
+  flyingBead: $('flying-bead'),
+  beadsTodayRounds: $('beads-today-rounds'),
+  beadsProgressPct: $('beads-progress-pct'),
   // confirm dialog (injected lazily)
   confirmDialog: null,
 };
@@ -573,11 +601,406 @@ async function refreshBoardsOnly() {
   }
 }
 
+// ----- Beads page -----------------------------------------------------------
+//
+// The digital-mala page. Each upward swipe = one bead. At 108 beads we:
+//   1) reset the bead counter to 0
+//   2) call changeRound(+1) so the round syncs to the backend + leaderboard
+//   3) show a celebration overlay
+//
+// In-progress bead state survives reload (saved to localStorage), but is
+// scoped per-day so opening the app the next morning starts fresh.
+
+// --- Persistence helpers ---
+
+function loadBeadCount() {
+  const savedDate = localStorage.getItem(LS_BEAD_DATE);
+  const today = todayLocal();
+  if (savedDate !== today) {
+    // stale — wipe
+    localStorage.setItem(LS_BEAD_DATE, today);
+    localStorage.setItem(LS_BEAD_COUNT, '0');
+    return 0;
+  }
+  const n = parseInt(localStorage.getItem(LS_BEAD_COUNT) || '0', 10);
+  return Number.isFinite(n) && n >= 0 && n < BEADS_PER_MALA ? n : 0;
+}
+
+function saveBeadCount(n) {
+  localStorage.setItem(LS_BEAD_DATE, todayLocal());
+  localStorage.setItem(LS_BEAD_COUNT, String(n));
+}
+
+// --- Ring rendering (108 small dots arranged in a circle) ---
+
+function buildBeadRing() {
+  if (els.beadRingDots.childElementCount) return; // build once
+  const cx = 160, cy = 160, r = 142;
+  const svgNs = 'http://www.w3.org/2000/svg';
+  // Start at top (12 o'clock) and go clockwise. -90deg in radians = -PI/2.
+  for (let i = 0; i < BEADS_PER_MALA; i++) {
+    const angle = (i / BEADS_PER_MALA) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    const dot = document.createElementNS(svgNs, 'circle');
+    dot.setAttribute('cx', x.toFixed(2));
+    dot.setAttribute('cy', y.toFixed(2));
+    dot.setAttribute('r', '3.2');
+    dot.classList.add('dot');
+    dot.dataset.idx = i;
+    els.beadRingDots.appendChild(dot);
+  }
+}
+
+function renderBeadRing() {
+  const dots = els.beadRingDots.children;
+  for (let i = 0; i < dots.length; i++) {
+    const d = dots[i];
+    d.classList.remove('filled', 'current');
+    if (i < session.beadCount) d.classList.add('filled');
+    if (i === session.beadCount - 1 && session.beadCount > 0) {
+      d.classList.add('current');
+      d.setAttribute('r', '5');
+    } else {
+      d.setAttribute('r', '3.2');
+    }
+  }
+}
+
+function renderBeadsPage() {
+  els.beadCount.textContent = session.beadCount;
+  els.beadsMalaNum.textContent = session.myCount + 1;
+  els.beadsUser.textContent = session.name || '';
+  els.beadsTodayRounds.textContent = session.myCount;
+  const pct = Math.round((session.beadCount / BEADS_PER_MALA) * 100);
+  els.beadsProgressPct.textContent = pct + '%';
+  renderBeadRing();
+}
+
+// --- Audio: a soft bell using WebAudio (no asset file needed) ---
+
+let audioCtx = null;
+function getAudio() {
+  if (!session.soundOn) return null;
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch { return null; }
+  }
+  return audioCtx;
+}
+
+function playBeadTick() {
+  const ctx = getAudio();
+  if (!ctx) return;
+  // Tiny, percussive click — wood-bead-on-string feel.
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(880, now);
+  osc.frequency.exponentialRampToValueAtTime(440, now + 0.08);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.18, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.14);
+}
+
+function playMalaBell() {
+  const ctx = getAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  // Two-tone temple bell: a fundamental plus a fifth, with a long decay.
+  [528, 792].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.28 - i * 0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 2.4);
+  });
+}
+
+// --- Haptics ---
+
+function hapticBead() {
+  if (!session.hapticsOn) return;
+  if (navigator.vibrate) navigator.vibrate(18);
+}
+function hapticMala() {
+  if (!session.hapticsOn) return;
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60, 40, 200]);
+}
+
+// --- The core: advance one bead ---
+
+function advanceOneBead() {
+  // Hide the "swipe up to chant" hint after first bead
+  els.beadInstruction.classList.add('hide');
+
+  session.beadCount += 1;
+
+  // Visual: flying bead animation
+  els.flyingBead.classList.remove('fly');
+  // Force a reflow so the animation restarts cleanly
+  // eslint-disable-next-line no-unused-expressions
+  els.flyingBead.offsetHeight;
+  els.flyingBead.classList.add('fly');
+
+  // Count bump
+  els.beadCount.classList.remove('bump');
+  // eslint-disable-next-line no-unused-expressions
+  els.beadCount.offsetHeight;
+  els.beadCount.classList.add('bump');
+
+  if (session.beadCount >= BEADS_PER_MALA) {
+    // Mala complete!
+    completeMala();
+  } else {
+    hapticBead();
+    playBeadTick();
+    saveBeadCount(session.beadCount);
+    renderBeadsPage();
+  }
+}
+
+function completeMala() {
+  hapticMala();
+  playMalaBell();
+
+  // Big celebration animation on the stage
+  els.beadStage.classList.add('celebrate');
+  setTimeout(() => els.beadStage.classList.remove('celebrate'), 1800);
+
+  // Reset bead count and sync the new mala round to the backend.
+  // We optimistically render the ring as fully filled for a beat before
+  // resetting to 0, so the user sees the completion.
+  session.beadCount = BEADS_PER_MALA;
+  renderBeadsPage();
+
+  setTimeout(() => {
+    session.beadCount = 0;
+    saveBeadCount(0);
+    renderBeadsPage();
+  }, 1200);
+
+  // Sync to backend — this updates myCount + leaderboard
+  changeRound(+1).then(() => {
+    showMalaCompleteModal(session.myCount);
+    renderBeadsPage();
+  }).catch(() => {
+    // changeRound already toasts on error and rolls back its own state,
+    // but we still want the user to see the celebration locally.
+    showMalaCompleteModal(session.myCount);
+  });
+}
+
+// --- Mala-complete modal ---
+
+function showMalaCompleteModal(totalToday) {
+  const overlay = document.createElement('div');
+  overlay.className = 'mala-complete-overlay';
+  overlay.innerHTML = `
+    <div class="mala-complete-card" role="dialog" aria-modal="true">
+      <span class="om" aria-hidden="true">🕉</span>
+      <h3>Mala Complete</h3>
+      <p>108 beads chanted with focus. Your sadhana grows stronger.</p>
+      <span class="total"></span>
+      <p style="margin-bottom:24px;">malas completed today</p>
+      <div class="mala-complete-actions">
+        <button data-act="done">Done</button>
+        <button class="primary" data-act="next">Chant another</button>
+      </div>
+    </div>
+  `;
+  overlay.querySelector('.total').textContent = totalToday;
+  overlay.addEventListener('click', (e) => {
+    const act = e.target.closest('button')?.dataset.act;
+    if (!act) return;
+    document.body.removeChild(overlay);
+    if (act === 'done') navigateTo('home');
+  });
+  document.body.appendChild(overlay);
+}
+
+// --- Swipe-up gesture handling ---
+
+let swipeState = null;
+let lastSwipeAt = 0;
+
+function onPointerDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  swipeState = {
+    startX: e.clientX,
+    startY: e.clientY,
+    startT: performance.now(),
+    pointerId: e.pointerId,
+  };
+  // Capture so we get the up event even if it leaves the element
+  try { els.beadStage.setPointerCapture(e.pointerId); } catch {}
+}
+
+function onPointerUp(e) {
+  if (!swipeState || swipeState.pointerId !== e.pointerId) return;
+  const dx = e.clientX - swipeState.startX;
+  const dy = e.clientY - swipeState.startY;
+  const dt = performance.now() - swipeState.startT;
+  const distance = Math.hypot(dx, dy);
+  const velocity = distance / Math.max(dt, 1);
+  swipeState = null;
+
+  // Must be:
+  //   - upward (dy negative, meaningfully so)
+  //   - mostly vertical (|dy| > |dx|)
+  //   - long enough, OR short but fast (flick)
+  const isUp = dy < -SWIPE_MIN_DISTANCE && Math.abs(dy) > Math.abs(dx);
+  const isFlick = dy < -20 && velocity > SWIPE_MIN_VELOCITY && Math.abs(dy) > Math.abs(dx);
+
+  if (!isUp && !isFlick) return;
+
+  // Debounce: ignore swipes that come faster than humanly chant-able
+  const now = performance.now();
+  if (now - lastSwipeAt < SWIPE_DEBOUNCE_MS) return;
+  lastSwipeAt = now;
+
+  advanceOneBead();
+}
+
+function onPointerCancel() { swipeState = null; }
+
+// Also support keyboard (space/arrow up) and click as a fallback for accessibility
+function onStageKey(e) {
+  if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'Enter') {
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastSwipeAt < SWIPE_DEBOUNCE_MS) return;
+    lastSwipeAt = now;
+    advanceOneBead();
+  }
+}
+
+function bindBeadSwipe() {
+  const stage = els.beadStage;
+  stage.addEventListener('pointerdown', onPointerDown);
+  stage.addEventListener('pointerup', onPointerUp);
+  stage.addEventListener('pointercancel', onPointerCancel);
+  // Wheel: scrolling up on desktop also counts (nice for testing + non-touch)
+  stage.addEventListener('wheel', (e) => {
+    if (e.deltaY < -10) {
+      const now = performance.now();
+      if (now - lastSwipeAt < SWIPE_DEBOUNCE_MS) return;
+      lastSwipeAt = now;
+      advanceOneBead();
+    }
+  }, { passive: true });
+  stage.tabIndex = 0;
+  stage.addEventListener('keydown', onStageKey);
+}
+
+// --- Options sheet ---
+
+function openBeadsSheet() {
+  const sheet = document.createElement('div');
+  sheet.className = 'beads-sheet';
+  sheet.innerHTML = `
+    <div class="beads-sheet-card" role="dialog" aria-modal="true">
+      <h4>Bead options</h4>
+      <div class="beads-sheet-row">
+        <span>Sound</span>
+        <button class="beads-sheet-toggle ${session.soundOn ? 'on' : ''}" data-act="sound" aria-label="Toggle sound"></button>
+      </div>
+      <div class="beads-sheet-row">
+        <span>Haptics</span>
+        <button class="beads-sheet-toggle ${session.hapticsOn ? 'on' : ''}" data-act="haptics" aria-label="Toggle haptics"></button>
+      </div>
+      <div class="beads-sheet-row">
+        <span>Reset current round</span>
+        <button class="danger" data-act="reset">Reset</button>
+      </div>
+      <div class="beads-sheet-row" style="justify-content:center;">
+        <button data-act="close" style="padding:8px 22px;">Close</button>
+      </div>
+    </div>
+  `;
+  sheet.addEventListener('click', (e) => {
+    if (e.target === sheet) { document.body.removeChild(sheet); return; }
+    const act = e.target.closest('button')?.dataset.act;
+    if (!act) return;
+    if (act === 'sound') {
+      session.soundOn = !session.soundOn;
+      localStorage.setItem(LS_SOUND_ON, session.soundOn ? '1' : '0');
+      e.target.classList.toggle('on', session.soundOn);
+    } else if (act === 'haptics') {
+      session.hapticsOn = !session.hapticsOn;
+      localStorage.setItem(LS_HAPTICS_ON, session.hapticsOn ? '1' : '0');
+      e.target.classList.toggle('on', session.hapticsOn);
+      if (session.hapticsOn) hapticBead();
+    } else if (act === 'reset') {
+      session.beadCount = 0;
+      saveBeadCount(0);
+      renderBeadsPage();
+      els.beadInstruction.classList.remove('hide');
+      document.body.removeChild(sheet);
+      toast('Round reset', 'info');
+    } else if (act === 'close') {
+      document.body.removeChild(sheet);
+    }
+  });
+  document.body.appendChild(sheet);
+}
+
+// --- Page navigation ---
+
+function navigateTo(page) {
+  session.page = page;
+  if (page === 'beads') {
+    els.appScreen.classList.add('hidden');
+    els.beadsScreen.classList.remove('hidden');
+    document.body.classList.add('beads-mode');
+    session.beadCount = loadBeadCount();
+    buildBeadRing();
+    renderBeadsPage();
+    if (session.beadCount > 0) els.beadInstruction.classList.add('hide');
+    else els.beadInstruction.classList.remove('hide');
+    // Resume audio context on first user interaction (browser autoplay policy)
+    els.beadStage.focus({ preventScroll: true });
+  } else {
+    els.beadsScreen.classList.add('hidden');
+    els.appScreen.classList.remove('hidden');
+    document.body.classList.remove('beads-mode');
+  }
+  // Update nav active state
+  document.querySelectorAll('#bottom-nav .nav-item').forEach((b) => {
+    b.classList.toggle('active', b.dataset.page === page);
+  });
+}
+
+function bindBeadsPageEvents() {
+  els.beadsBackBtn.addEventListener('click', () => navigateTo('home'));
+  els.beadsMenuBtn.addEventListener('click', openBeadsSheet);
+  bindBeadSwipe();
+  // Bottom nav
+  els.bottomNav.addEventListener('click', (e) => {
+    const btn = e.target.closest('.nav-item');
+    if (!btn) return;
+    navigateTo(btn.dataset.page);
+  });
+}
+
 // ----- Setup / change-user --------------------------------------------------
 
 function showSetupScreen() {
   els.setupScreen.classList.remove('hidden');
   els.appScreen.classList.add('hidden');
+  els.beadsScreen.classList.add('hidden');
+  els.bottomNav.classList.add('hidden');
+  document.body.classList.remove('beads-mode');
   els.usernameInput.value = '';
   els.usernameInput.focus();
 }
@@ -585,7 +1008,15 @@ function showSetupScreen() {
 function showAppScreen() {
   els.setupScreen.classList.add('hidden');
   els.appScreen.classList.remove('hidden');
+  els.beadsScreen.classList.add('hidden');
+  els.bottomNav.classList.remove('hidden');
+  document.body.classList.remove('beads-mode');
   els.displayUsername.textContent = session.name;
+  // Reset nav state
+  document.querySelectorAll('#bottom-nav .nav-item').forEach((b) => {
+    b.classList.toggle('active', b.dataset.page === 'home');
+  });
+  session.page = 'home';
 }
 
 /**
@@ -694,6 +1125,7 @@ function bindEvents() {
   els.changeUserBtn.addEventListener('click', handleChangeUser);
   els.incBtn.addEventListener('click', () => changeRound(+1));
   els.decBtn.addEventListener('click', () => changeRound(-1));
+  bindBeadsPageEvents();
 }
 
 async function init() {

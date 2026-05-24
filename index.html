@@ -36,10 +36,6 @@
           autocomplete="off"
           autocapitalize="words"
         />
-        <p class="form-hint">
-          Your name is your identity here — use the same name on any device to
-          keep your history and streak.
-        </p>
       </div>
 
       <button id="start-btn" class="btn-primary">Begin Sadhana 🙏</button>
@@ -134,6 +130,76 @@
     </footer>
 
   </div><!-- #app-screen -->
+
+
+  <!-- ============================================================
+       SCREEN 3: Digital Beads
+       A full-screen swipe surface for chanting. Each upward swipe
+       advances one bead; 108 beads = 1 mala round, which syncs back
+       to the main counter and to the leaderboard.
+  ============================================================ -->
+  <div id="beads-screen" class="screen hidden">
+
+    <!-- Top bar: minimal, doesn't fight for attention with the mala -->
+    <div class="beads-topbar">
+      <button id="beads-back-btn" class="btn-ghost" aria-label="Back to home">←</button>
+      <div class="beads-topbar-center">
+        <p class="beads-mala-label">Round <span id="beads-mala-num">1</span></p>
+        <p class="beads-user" id="beads-user"></p>
+      </div>
+      <button id="beads-menu-btn" class="btn-ghost" aria-label="Bead options" title="Options">⋯</button>
+    </div>
+
+    <!-- The 108-bead progress ring around the central counter -->
+    <div class="bead-stage" id="bead-stage">
+
+      <!-- SVG ring of 108 small dots that fill as the user swipes -->
+      <svg class="bead-ring" viewBox="0 0 320 320" aria-hidden="true">
+        <g id="bead-ring-dots"></g>
+      </svg>
+
+      <!-- Centre piece: the meru bead, current count, and instruction -->
+      <div class="bead-center">
+        <div class="bead-glow" aria-hidden="true"></div>
+        <div class="bead-current" aria-live="polite">
+          <span id="bead-count">0</span>
+          <span class="bead-of-108">of 108</span>
+        </div>
+        <p class="bead-instruction" id="bead-instruction">Swipe up to chant</p>
+      </div>
+
+      <!-- The flying bead — animates upward each time you swipe -->
+      <div class="flying-bead" id="flying-bead" aria-hidden="true"></div>
+
+    </div>
+
+    <!-- Bottom info strip: mala progress + completed today -->
+    <div class="beads-bottom">
+      <div class="beads-bottom-stat">
+        <span class="beads-bottom-num" id="beads-today-rounds">0</span>
+        <span class="beads-bottom-lbl">malas today</span>
+      </div>
+      <div class="beads-bottom-divider"></div>
+      <div class="beads-bottom-stat">
+        <span class="beads-bottom-num" id="beads-progress-pct">0%</span>
+        <span class="beads-bottom-lbl">this round</span>
+      </div>
+    </div>
+
+  </div><!-- #beads-screen -->
+
+
+  <!-- Floating bottom navigation, shown on app + beads screens -->
+  <nav id="bottom-nav" class="bottom-nav hidden">
+    <button class="nav-item active" data-page="home">
+      <span class="nav-icon">🏠</span>
+      <span class="nav-label">Home</span>
+    </button>
+    <button class="nav-item" data-page="beads">
+      <span class="nav-icon">📿</span>
+      <span class="nav-label">Beads</span>
+    </button>
+  </nav>
 
 
   <!-- Toast notification (injected dynamically by app.js) -->

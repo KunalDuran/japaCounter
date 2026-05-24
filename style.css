@@ -461,3 +461,497 @@ footer {
   header { padding: 16px 24px; }
   main   { padding: 28px 24px 96px; }
 }
+
+
+/* =====================================================
+   BOTTOM NAVIGATION
+   Floating pill, shown on the app screen and beads screen.
+   ===================================================== */
+.bottom-nav {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 10px 32px var(--shadow);
+  z-index: 50;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-lt);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.2s;
+}
+.nav-item .nav-icon { font-size: 1.1rem; line-height: 1; }
+.nav-item:hover     { color: var(--primary); }
+.nav-item.active {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dk) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(224, 123, 57, 0.4);
+}
+
+/* Beads screen has a darker bottom nav variant for contrast */
+body.beads-mode .bottom-nav {
+  background: rgba(40, 22, 12, 0.75);
+  border-color: rgba(245, 166, 109, 0.18);
+}
+body.beads-mode .nav-item        { color: rgba(245, 224, 200, 0.7); }
+body.beads-mode .nav-item:hover  { color: #fff; }
+
+
+/* =====================================================
+   BEADS SCREEN
+   Dusk palette: deep maroon to warm amber. Meant to feel
+   different from the home screen — entering a sacred space.
+   ===================================================== */
+#beads-screen {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, rgba(224, 123, 57, 0.22) 0%, transparent 60%),
+    linear-gradient(180deg, #2a1410 0%, #3d1f15 50%, #1a0a06 100%);
+  color: #f5e0c8;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Avoid scroll/refresh interfering with the swipe gesture */
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+body.beads-mode { overflow: hidden; }
+
+/* Subtle sacred-geometry dot pattern overlay */
+#beads-screen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(245, 224, 200, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Top bar ── */
+.beads-topbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 18px 14px 8px;
+  gap: 8px;
+}
+.beads-topbar .btn-ghost {
+  color: rgba(245, 224, 200, 0.7);
+  font-size: 1.35rem;
+  padding: 8px 12px;
+}
+.beads-topbar .btn-ghost:hover {
+  color: #fff;
+  background: rgba(245, 224, 200, 0.08);
+}
+.beads-topbar-center {
+  flex: 1;
+  text-align: center;
+}
+.beads-mala-label {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #f5e0c8;
+}
+.beads-mala-label span {
+  color: var(--primary-lt);
+  margin-left: 2px;
+}
+.beads-user {
+  font-size: 0.7rem;
+  color: rgba(245, 224, 200, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 2px;
+}
+
+/* ── Bead stage: where the swiping happens ── */
+.bead-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+}
+.bead-stage:active { cursor: grabbing; }
+
+/* The 108-bead ring — a circle of small dots that fill in */
+.bead-ring {
+  position: absolute;
+  width: 86vw;
+  max-width: 380px;
+  height: auto;
+  aspect-ratio: 1;
+  filter: drop-shadow(0 0 18px rgba(224, 123, 57, 0.15));
+}
+.bead-ring .dot {
+  fill: rgba(245, 224, 200, 0.12);
+  transition: fill 0.4s ease, r 0.3s ease;
+}
+.bead-ring .dot.filled {
+  fill: var(--primary-lt);
+}
+.bead-ring .dot.current {
+  fill: var(--gold);
+  filter: drop-shadow(0 0 6px var(--gold));
+}
+
+/* Centre piece */
+.bead-center {
+  position: relative;
+  width: 62vw;
+  max-width: 240px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 30% 30%, #f5a66d 0%, #c4622a 45%, #6b2a14 100%);
+  box-shadow:
+    inset 0 -20px 40px rgba(0, 0, 0, 0.45),
+    inset 0 12px 24px rgba(255, 220, 180, 0.25),
+    0 18px 60px rgba(224, 123, 57, 0.35);
+}
+
+/* Pulsing glow behind the central meru bead — breathing rhythm */
+.bead-glow {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(245, 166, 109, 0.4) 0%, transparent 65%);
+  animation: bead-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+@keyframes bead-breathe {
+  0%, 100% { transform: scale(1);    opacity: 0.7; }
+  50%      { transform: scale(1.15); opacity: 1;   }
+}
+
+.bead-current {
+  font-family: var(--font-display);
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  line-height: 1;
+}
+#bead-count {
+  display: block;
+  font-size: 4.6rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.bead-of-108 {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+#bead-count.bump { animation: bead-count-bump 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes bead-count-bump {
+  0%   { transform: scale(1);    }
+  40%  { transform: scale(1.22); }
+  100% { transform: scale(1);    }
+}
+
+.bead-instruction {
+  position: absolute;
+  bottom: -42px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: rgba(245, 224, 200, 0.55);
+  letter-spacing: 0.04em;
+  animation: hint-pulse 2.5s ease-in-out infinite;
+}
+@keyframes hint-pulse {
+  0%, 100% { opacity: 0.45; transform: translateY(0); }
+  50%      { opacity: 0.85; transform: translateY(-3px); }
+}
+.bead-instruction.hide { animation: none; opacity: 0; }
+
+/* Bead-on-string: appears mid-stage and flies upward on each swipe */
+.flying-bead {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #f5a66d, #c4622a 60%, #6b2a14);
+  box-shadow: 0 0 18px rgba(245, 166, 109, 0.6), inset -3px -3px 6px rgba(0,0,0,0.35);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.flying-bead.fly {
+  animation: bead-fly 0.65s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+@keyframes bead-fly {
+  0%   { opacity: 0;   transform: translate(-50%, 40px)   scale(0.6); }
+  20%  { opacity: 1;   transform: translate(-50%, 30px)   scale(1);   }
+  100% { opacity: 0;   transform: translate(-50%, -180px) scale(0.4); }
+}
+
+/* Round-complete celebration: golden bloom over the stage */
+.bead-stage.celebrate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.45) 0%, transparent 60%);
+  pointer-events: none;
+  animation: celebrate-bloom 1.6s ease-out forwards;
+}
+@keyframes celebrate-bloom {
+  0%   { opacity: 0; transform: scale(0.6); }
+  35%  { opacity: 1; transform: scale(1);   }
+  100% { opacity: 0; transform: scale(1.6); }
+}
+
+/* ── Bottom info strip ── */
+.beads-bottom {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 16px 18px 92px;
+}
+.beads-bottom-stat {
+  text-align: center;
+}
+.beads-bottom-num {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 600;
+  color: var(--primary-lt);
+  line-height: 1;
+}
+.beads-bottom-lbl {
+  display: block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(245, 224, 200, 0.5);
+  margin-top: 4px;
+}
+.beads-bottom-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(245, 224, 200, 0.18);
+}
+
+
+/* ── Mala-complete modal ── */
+.mala-complete-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 50% 40%, rgba(212, 160, 23, 0.3) 0%, rgba(0,0,0,0.85) 70%);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  padding: 24px;
+  animation: overlay-fade-in 0.4s ease-out;
+}
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mala-complete-card {
+  background: linear-gradient(160deg, #3d1f15 0%, #6b2a14 100%);
+  border: 1px solid rgba(212, 160, 23, 0.45);
+  border-radius: var(--r-xl);
+  padding: 36px 28px;
+  max-width: 340px;
+  width: 100%;
+  text-align: center;
+  color: #f5e0c8;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6), 0 0 80px rgba(212, 160, 23, 0.25);
+  animation: card-rise 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes card-rise {
+  from { opacity: 0; transform: translateY(28px) scale(0.92); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+.mala-complete-card .om {
+  font-size: 3.6rem;
+  display: block;
+  margin-bottom: 8px;
+  animation: breathe 4s ease-in-out infinite;
+}
+.mala-complete-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--gold);
+}
+.mala-complete-card p {
+  font-size: 0.92rem;
+  color: rgba(245, 224, 200, 0.78);
+  margin-bottom: 24px;
+  line-height: 1.55;
+}
+.mala-complete-card .total {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 600;
+  color: #fff;
+  margin: 4px 0 18px;
+}
+.mala-complete-actions {
+  display: flex;
+  gap: 10px;
+}
+.mala-complete-actions button {
+  flex: 1;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(245, 224, 200, 0.2);
+  background: transparent;
+  color: #f5e0c8;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+.mala-complete-actions button:hover { background: rgba(245, 224, 200, 0.08); }
+.mala-complete-actions .primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dk) 100%);
+  border-color: transparent;
+  color: #fff;
+}
+.mala-complete-actions .primary:hover { transform: translateY(-1px); }
+
+
+/* ── Beads options sheet (small menu) ── */
+.beads-sheet {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 400;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: overlay-fade-in 0.25s ease-out;
+}
+.beads-sheet-card {
+  background: #2a1410;
+  border: 1px solid rgba(245, 224, 200, 0.12);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  padding: 18px 18px 32px;
+  width: 100%;
+  max-width: 460px;
+  color: #f5e0c8;
+  animation: sheet-up 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0);    }
+}
+.beads-sheet-card h4 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #f5e0c8;
+}
+.beads-sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 4px;
+  border-top: 1px solid rgba(245, 224, 200, 0.08);
+  font-size: 0.92rem;
+}
+.beads-sheet-row:first-of-type { border-top: 0; }
+.beads-sheet-row button {
+  background: transparent;
+  border: 1px solid rgba(245, 224, 200, 0.22);
+  color: #f5e0c8;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.beads-sheet-row button:hover { background: rgba(245, 224, 200, 0.06); }
+.beads-sheet-row button.danger { border-color: rgba(220, 80, 60, 0.5); color: #ff9a86; }
+.beads-sheet-toggle {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(245, 224, 200, 0.15);
+  border: none;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  padding: 0;
+}
+.beads-sheet-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f5e0c8;
+  transition: transform 0.2s;
+}
+.beads-sheet-toggle.on { background: var(--primary); }
+.beads-sheet-toggle.on::after { transform: translateX(18px); }
+
+
+/* ── Responsive tweaks for the beads page ── */
+@media (min-width: 480px) {
+  .bead-ring { max-width: 420px; }
+  .bead-center { max-width: 270px; }
+  #bead-count { font-size: 5.4rem; }
+}
+@media (min-height: 740px) {
+  .bead-instruction { bottom: -52px; }
+}
