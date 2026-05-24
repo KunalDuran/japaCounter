@@ -1,0 +1,463 @@
+/* =====================================================
+   Japa Counter — Spiritual Minimalist Stylesheet
+   Mobile-first, warm saffron palette
+   ===================================================== */
+
+/* ── Design Tokens ── */
+:root {
+  /* Colours */
+  --bg:           #FFF8EF;
+  --card:         #FFFFFF;
+  --primary:      #E07B39;   /* saffron */
+  --primary-dk:   #C4622A;
+  --primary-lt:   #F5A66D;
+  --gold:         #D4A017;
+  --purple:       #7B5EA7;   /* community section accent */
+  --text-dk:      #3D2B1F;
+  --text-md:      #6B4C3B;
+  --text-lt:      #A07860;
+  --border:       #F0DDD0;
+  --shadow:       rgba(100, 50, 20, 0.12);
+
+  /* Typography */
+  --font-display: 'Crimson Pro', Georgia, serif;
+  --font-body:    'Inter', system-ui, sans-serif;
+
+  /* Spacing / Radii */
+  --r-sm: 8px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-xl: 32px;
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg);
+  color: var(--text-dk);
+  min-height: 100vh;
+  line-height: 1.6;
+  /* Very subtle dot grid — evokes a mandala pattern without being noisy */
+  background-image: radial-gradient(circle, rgba(224,123,57,.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* ── Utility ── */
+.screen   { min-height: 100vh; }
+.hidden   { display: none !important; }
+
+
+/* =====================================================
+   SETUP SCREEN
+   ===================================================== */
+
+#setup-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: linear-gradient(150deg, #FFF4E6 0%, #FFE4C0 100%);
+}
+
+.setup-card {
+  background: var(--card);
+  border-radius: var(--r-xl);
+  padding: 44px 32px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 24px 64px var(--shadow);
+}
+
+/* ── Om symbol ── */
+.om-symbol {
+  font-size: 64px;
+  display: block;
+  margin-bottom: 12px;
+  animation: breathe 4s ease-in-out infinite;
+}
+.om-symbol.small { font-size: 28px; margin-bottom: 0; animation: none; }
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1);    opacity: 1;   }
+  50%       { transform: scale(1.07); opacity: .85; }
+}
+
+.setup-card h1 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--text-dk);
+  margin-bottom: 6px;
+}
+.subtitle {
+  color: var(--text-lt);
+  font-size: .9rem;
+  margin-bottom: 32px;
+  line-height: 1.5;
+}
+
+/* ── Form ── */
+.form-group          { text-align: left; margin-bottom: 20px; }
+.form-group label    {
+  display: block;
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--text-md);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 8px;
+}
+.form-group input {
+  width: 100%;
+  padding: 13px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: 1rem;
+  font-family: var(--font-body);
+  color: var(--text-dk);
+  background: var(--bg);
+  outline: none;
+  transition: border-color .2s, box-shadow .2s;
+}
+.form-group input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(224,123,57,.15);
+}
+.form-group input::placeholder { color: var(--text-lt); }
+
+
+/* =====================================================
+   BUTTONS
+   ===================================================== */
+
+/* Primary call-to-action */
+.btn-primary {
+  width: 100%;
+  padding: 15px 24px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dk) 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-md);
+  font-size: 1.05rem;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+  box-shadow: 0 5px 18px rgba(224,123,57,.38);
+  transition: transform .15s, box-shadow .15s;
+}
+.btn-primary:hover  { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(224,123,57,.48); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary.loading { opacity: .55; pointer-events: none; }
+
+/* Ghost / icon button */
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: var(--text-lt);
+  font-size: 1.05rem;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  transition: color .2s, background .2s;
+}
+.btn-ghost:hover { color: var(--primary); background: rgba(224,123,57,.08); }
+
+/* ── Counter +/− buttons ── */
+.counter-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.btn-counter {
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .15s, box-shadow .2s;
+  font-weight: 300;
+}
+
+/* Large + button */
+.btn-increment {
+  width: 88px;
+  height: 88px;
+  font-size: 2.6rem;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dk) 100%);
+  color: #fff;
+  box-shadow: 0 6px 22px rgba(224,123,57,.42);
+}
+.btn-increment:hover  { transform: scale(1.06); box-shadow: 0 10px 28px rgba(224,123,57,.55); }
+.btn-increment:active { transform: scale(.96); }
+
+/* Smaller − button */
+.btn-decrement {
+  width: 64px;
+  height: 64px;
+  font-size: 2rem;
+  background: #fff;
+  color: var(--text-md);
+  border: 2px solid var(--border);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.btn-decrement:hover  { border-color: var(--primary-lt); color: var(--primary); transform: scale(1.04); }
+.btn-decrement:active { transform: scale(.96); }
+
+.btn-counter:disabled { opacity: .35; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+.btn-counter.loading  { opacity: .55; pointer-events: none; }
+
+
+/* =====================================================
+   APP SCREEN — HEADER
+   ===================================================== */
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.header-content {
+  max-width: 600px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-text h1 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--text-dk);
+  line-height: 1.2;
+}
+.greeting        { font-size: .78rem; color: var(--text-lt); }
+.greeting span   { color: var(--primary); font-weight: 500; }
+
+.header-content .btn-ghost { margin-left: auto; }
+
+
+/* =====================================================
+   APP SCREEN — MAIN LAYOUT
+   ===================================================== */
+
+main {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px 14px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: var(--r-lg);
+  padding: 24px;
+  box-shadow: 0 4px 20px var(--shadow);
+  border: 1px solid rgba(240,221,208,.7);
+}
+.card h2 {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-lt);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 16px;
+}
+
+
+/* ── My Rounds card ── */
+.my-rounds-card {
+  text-align: center;
+  background: linear-gradient(135deg, #FFFAF4 0%, #FFF2E0 100%);
+  border-color: rgba(224,123,57,.22);
+}
+
+.counter-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+}
+
+#my-rounds {
+  font-family: var(--font-display);
+  font-size: 5.5rem;
+  font-weight: 600;
+  color: var(--primary);
+  line-height: 1;
+  min-width: 2ch;
+  display: inline-block;
+  text-align: center;
+}
+#my-rounds.bump { animation: counter-bump .28s ease-out; }
+
+@keyframes counter-bump {
+  0%   { transform: scale(1);    }
+  40%  { transform: scale(1.18); }
+  100% { transform: scale(1);    }
+}
+
+.rounds-label   { font-size: .95rem; color: var(--text-lt); }
+.counter-message {
+  font-size: .82rem;
+  color: var(--text-lt);
+  min-height: 18px;
+  margin-top: 14px;
+}
+
+
+/* ── Community card ── */
+.community-card {
+  background: linear-gradient(135deg, #F6F1FF 0%, #EDE4FF 100%);
+  border-color: rgba(123,94,167,.15);
+}
+.community-stats   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stat              { text-align: center; background: rgba(255,255,255,.75); border-radius: var(--r-md); padding: 14px 8px; }
+.stat-number       { display: block; font-family: var(--font-display); font-size: 2.4rem; font-weight: 600; color: var(--purple); line-height: 1; }
+.stat-label        { font-size: .75rem; color: var(--text-lt); text-transform: uppercase; letter-spacing: .05em; margin-top: 4px; display: block; }
+
+
+/* ── Leaderboard card ── */
+.leaderboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.leaderboard-header h2 { margin-bottom: 0; }
+
+.refresh-status {
+  font-size: .72rem;
+  color: var(--text-lt);
+  opacity: 0;
+  transition: opacity .3s;
+}
+.refresh-status.visible { opacity: 1; }
+
+.leaderboard-list { display: flex; flex-direction: column; gap: 8px; }
+
+.loading-state,
+.empty-state,
+.error-state {
+  text-align: center;
+  padding: 28px 16px;
+  color: var(--text-lt);
+  font-size: .88rem;
+  line-height: 1.7;
+}
+
+/* Individual leaderboard row */
+.leaderboard-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--bg);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  transition: background .2s;
+}
+.leaderboard-item.is-me {
+  background: linear-gradient(135deg, #FFF3E4 0%, #FFE9CC 100%);
+  border-color: rgba(224,123,57,.28);
+}
+
+.rank            { font-size: .78rem; font-weight: 600; color: var(--text-lt); width: 26px; text-align: center; flex-shrink: 0; }
+.rank-1          { color: var(--gold);   font-size: .95rem; }
+.rank-2          { color: #9E9E9E; }
+.rank-3          { color: #CD7F32; }
+
+.lb-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-dk);
+  font-size: .92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.you-tag {
+  font-size: .65rem;
+  background: var(--primary);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.lb-rounds {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.refresh-hint  { text-align: center; font-size: .7rem; color: var(--text-lt); margin-top: 12px; }
+
+
+/* =====================================================
+   FOOTER
+   ===================================================== */
+footer {
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--text-lt);
+  font-size: .78rem;
+}
+
+
+/* =====================================================
+   TOAST NOTIFICATION
+   ===================================================== */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(90px);
+  background: var(--text-dk);
+  color: #fff;
+  padding: 11px 22px;
+  border-radius: var(--r-md);
+  font-size: .88rem;
+  z-index: 200;
+  max-width: 88vw;
+  text-align: center;
+  pointer-events: none;
+  transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+}
+.toast.show        { transform: translateX(-50%) translateY(0); }
+.toast.toast-error { background: #c0392b; }
+
+
+/* =====================================================
+   RESPONSIVE ENHANCEMENTS (≥480 px)
+   ===================================================== */
+@media (min-width: 480px) {
+  .setup-card { padding: 52px 44px; }
+  .setup-card h1 { font-size: 2.3rem; }
+  #my-rounds  { font-size: 6.5rem; }
+  .btn-increment { width: 96px; height: 96px; font-size: 2.8rem; }
+  main { padding: 24px 20px 96px; gap: 16px; }
+}
+
+@media (min-width: 600px) {
+  header { padding: 16px 24px; }
+  main   { padding: 28px 24px 96px; }
+}

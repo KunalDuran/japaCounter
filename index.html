@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Japa Counter — Daily Chanting Tracker</title>
+
+  <!-- Google Fonts: Crimson Pro for headings, Inter for body -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600&family=Inter:wght@300;400;500&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============================================================
+       SCREEN 1: Username Setup
+       Shown only on first visit (no username in localStorage)
+  ============================================================ -->
+  <div id="setup-screen" class="screen">
+    <div class="setup-card">
+      <span class="om-symbol" aria-hidden="true">🕉</span>
+      <h1>Japa Counter</h1>
+      <p class="subtitle">Track your daily chanting rounds with the community</p>
+
+      <div class="form-group">
+        <label for="username-input">Your name to get started</label>
+        <input
+          type="text"
+          id="username-input"
+          placeholder="e.g. Radha Devi…"
+          maxlength="50"
+          autocomplete="off"
+          autocapitalize="words"
+        />
+      </div>
+
+      <button id="start-btn" class="btn-primary">Begin Sadhana 🙏</button>
+    </div>
+  </div>
+
+
+  <!-- ============================================================
+       SCREEN 2: Main App
+       Shown after username is set
+  ============================================================ -->
+  <div id="app-screen" class="screen hidden">
+
+    <!-- Sticky header with name and change-user button -->
+    <header>
+      <div class="header-content">
+        <span class="om-symbol small" aria-hidden="true">🕉</span>
+        <div class="header-text">
+          <h1>Japa Counter</h1>
+          <p class="greeting">Hare Krishna, <span id="display-username"></span></p>
+        </div>
+        <button id="change-user-btn" class="btn-ghost" title="Switch user" aria-label="Change user">✎</button>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- ── Card 1: My rounds for today ── -->
+      <section class="card my-rounds-card">
+        <h2>My Rounds Today</h2>
+
+        <div class="counter-display">
+          <span id="my-rounds" aria-live="polite">0</span>
+          <span class="rounds-label">rounds</span>
+        </div>
+
+        <!-- + and − buttons -->
+        <div class="counter-controls">
+          <button
+            id="decrement-btn"
+            class="btn-counter btn-decrement"
+            aria-label="Remove one round"
+            disabled
+          >−</button>
+
+          <button
+            id="increment-btn"
+            class="btn-counter btn-increment"
+            aria-label="Add one round"
+          >+</button>
+        </div>
+
+        <!-- Encouraging message shown after each round (e.g. "1 mala complete!") -->
+        <p id="counter-message" class="counter-message" aria-live="polite"></p>
+      </section>
+
+
+      <!-- ── Card 2: Community totals ── -->
+      <section class="card community-card">
+        <h2>Community Today</h2>
+        <div class="community-stats">
+          <div class="stat">
+            <span id="total-rounds" class="stat-number">—</span>
+            <span class="stat-label">total rounds</span>
+          </div>
+          <div class="stat">
+            <span id="total-devotees" class="stat-number">—</span>
+            <span class="stat-label">devotees</span>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ── Card 3: Leaderboard ── -->
+      <section class="card leaderboard-card">
+        <div class="leaderboard-header">
+          <h2>Leaderboard</h2>
+          <span id="refresh-status" class="refresh-status" aria-live="polite"></span>
+        </div>
+
+        <div id="leaderboard-list" class="leaderboard-list">
+          <div class="loading-state">Loading…</div>
+        </div>
+
+        <p class="refresh-hint">Auto-refreshes every 15 seconds</p>
+      </section>
+
+    </main>
+
+    <footer>
+      <p>Made with ♥ for the chanting community</p>
+    </footer>
+
+  </div><!-- #app-screen -->
+
+
+  <!-- Toast notification (injected dynamically by app.js) -->
+
+  <script src="app.js"></script>
+</body>
+</html>
