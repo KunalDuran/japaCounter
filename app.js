@@ -1,24 +1,26 @@
 /* =============================================================================
- * Japa Counter — app.js (v2: time-range leaderboards + streaks)
+ * Japa Counter — app.js (v3: username-as-identity)
  *
- * Backend: the dynamic bbolt-crud REST service on http://localhost:8080.
+ * Backend: dynamic bbolt-crud REST on https://dyn.duranz.in (or localhost).
  *
- * CORS: serve index.html / app.js / style.css from the Go backend itself via
- *   http.FileServer (same-origin), or add Access-Control-Allow-Origin: * to
- *   the writeJSON/writeError helpers in main.go.
+ * Schema change vs v2:
+ *   users:  key = <lookupName>  (= lowercased + trimmed display name)
+ *           value = { displayName, createdAt }
+ *   rounds: key = "<YYYY-MM-DD>:<lookupName>"
+ *           value = { userId: <lookupName>, name: <displayName>, date, count, updatedAt }
  *
- * Schema (unchanged):
- *   users:  key = userId
- *           value = { name, createdAt }
- *   rounds: key = "<YYYY-MM-DD>:<userId>"
- *           value = { userId, name, date, count, updatedAt }
+ * Why the username is the key:
+ *   - Identity travels with the name, so the same person on any browser/device
+ *     gets the same record by typing the same name.
+ *   - Storing it lowercased+trimmed prevents "Kunal", "kunal", and " Kunal "
+ *     from being three different users.
+ *   - The original-case displayName is kept in the value for rendering.
  *
- * What's new vs v1:
- *   - Leaderboard has four tabs: Today / 7 days / 30 days / All-time
- *   - A second board ranks users by current streak (with longest as tiebreak)
- *   - Both are computed in JS from a single fetch of /collections/rounds.
- *     Replace with a server-side prefix endpoint when data grows; the only
- *     function that needs to change is loadAndIndex().
+ * Trust model:
+ *   This is a community chanting tracker. There is no password. If someone
+ *   else types your name, the UI will offer them "continue as you" — the
+ *   damage cap is "they inflate your round count". Bolt-on a PIN later if
+ *   abuse ever becomes real.
  * ===========================================================================*/
 
 'use strict';
@@ -27,9 +29,13 @@
 
 const API_BASE = 'https://dyn.duranz.in';
 const REFRESH_MS = 15_000;
-const LS_USER_ID = 'japa.userId';
-const LS_USER_NAME = 'japa.userName';
-const LS_RANGE = 'japa.range'; // remember the tab the user last picked
+const LS_USER_KEY = 'japa.userKey';        // lookup key (lowercased name)
+const LS_USER_NAME = 'japa.userName';      // original-case display name
+const LS_RANGE = 'japa.range';
+
+// Username rules — letters, digits, spaces, underscore, hyphen, dot.
+// 2-30 chars. Adjust if you want to allow Devanagari, accents, etc.
+const USERNAME_RE = /^[A-Za-z0-9 _.\-]{2,30}$/;
 
 // ----- Date helpers ---------------------------------------------------------
 
@@ -39,19 +45,13 @@ function ymd(d) {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-
-/** Today's date in the user's local timezone, formatted YYYY-MM-DD. */
 function todayLocal() { return ymd(new Date()); }
-
-/** Date N days before today (local), as YYYY-MM-DD. */
 function daysAgoLocal(n) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - n);
   return ymd(d);
 }
-
-/** Days between two YYYY-MM-DD strings, treating each as a local midnight. */
 function dayDiff(aYmd, bYmd) {
   const [ay, am, ad] = aYmd.split('-').map(Number);
   const [by, bm, bd] = bYmd.split('-').map(Number);
@@ -60,66 +60,87 @@ function dayDiff(aYmd, bYmd) {
   return Math.round((a - b) / 86_400_000);
 }
 
-function roundsKey(date, userId) { return `${date}:${userId}`; }
+// ----- Identity helpers -----------------------------------------------------
 
-function newUserId() {
-  if (crypto?.randomUUID) return crypto.randomUUID();
-  return 'u-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+/** Normalize a display name into its lookup key. */
+function toLookupKey(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function roundsKey(date, userKey) {
+  return `${date}:${userKey}`;
+}
+
+/** Friendly "joined Apr 12" string from an ISO timestamp. */
+function formatJoined(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(+d)) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 // ----- API client -----------------------------------------------------------
 
 const api = {
-  async createUser(userId, name) {
+  async getUser(userKey) {
+    const res = await fetch(`${API_BASE}/collections/users/${encodeURIComponent(userKey)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`getUser ${res.status}`);
+    return res.json();
+  },
+
+  async createUser(userKey, displayName) {
     const res = await fetch(`${API_BASE}/collections/users`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        key: userId,
-        value: { name, createdAt: new Date().toISOString() },
+        key: userKey,
+        value: { displayName, createdAt: new Date().toISOString() },
       }),
     });
-    if (!res.ok) throw new Error(`createUser failed: ${res.status}`);
+    // 409 means it appeared between our GET and POST (race). Treat as "exists".
+    if (res.status === 409) return null;
+    if (!res.ok) throw new Error(`createUser ${res.status}`);
     return res.json();
   },
 
-  async getRounds(date, userId) {
+  async getRounds(date, userKey) {
     const res = await fetch(
-      `${API_BASE}/collections/rounds/${encodeURIComponent(roundsKey(date, userId))}`
+      `${API_BASE}/collections/rounds/${encodeURIComponent(roundsKey(date, userKey))}`
     );
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`getRounds failed: ${res.status}`);
+    if (!res.ok) throw new Error(`getRounds ${res.status}`);
     return res.json();
   },
 
-  async putRounds(date, userId, value) {
+  async putRounds(date, userKey, value) {
     const res = await fetch(
-      `${API_BASE}/collections/rounds/${encodeURIComponent(roundsKey(date, userId))}`,
+      `${API_BASE}/collections/rounds/${encodeURIComponent(roundsKey(date, userKey))}`,
       {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(value),
       }
     );
-    if (!res.ok) throw new Error(`putRounds failed: ${res.status}`);
+    if (!res.ok) throw new Error(`putRounds ${res.status}`);
     return res.json();
   },
 
   async allRounds() {
     const res = await fetch(`${API_BASE}/collections/rounds`);
-    if (!res.ok) throw new Error(`allRounds failed: ${res.status}`);
-    return res.json(); // { "<date>:<userId>": <record>, ... }
+    if (!res.ok) throw new Error(`allRounds ${res.status}`);
+    return res.json();
   },
 };
 
 // ----- Session --------------------------------------------------------------
 
 let session = {
-  userId: localStorage.getItem(LS_USER_ID),
+  userKey: localStorage.getItem(LS_USER_KEY),
   name: localStorage.getItem(LS_USER_NAME),
   myCount: 0,
-  range: localStorage.getItem(LS_RANGE) || 'today', // today | 7d | 30d | all
-  view: 'totals', // totals | streaks
+  range: localStorage.getItem(LS_RANGE) || 'today',
+  view: 'totals',
 };
 
 // ----- DOM ------------------------------------------------------------------
@@ -140,6 +161,8 @@ const els = {
   totalDevotees: $('total-devotees'),
   leaderboardList: $('leaderboard-list'),
   refreshStatus: $('refresh-status'),
+  // confirm dialog (injected lazily)
+  confirmDialog: null,
 };
 
 // ----- Toast ----------------------------------------------------------------
@@ -165,11 +188,83 @@ function toast(message, kind = 'info') {
   toast._timer = setTimeout(() => (t.style.opacity = '0'), 2200);
 }
 
-// ----- Leaderboard chrome (tabs injected once) ------------------------------
+// ----- "Is this you?" dialog ------------------------------------------------
+//
+// Built in JS so index.html doesn't need new structural elements. The
+// returned Promise resolves to true (yes, it's me) or false (no, different
+// person).
+
+function injectConfirmStyles() {
+  if (document.getElementById('confirm-styles')) return;
+  const css = document.createElement('style');
+  css.id = 'confirm-styles';
+  css.textContent = `
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; padding: 16px;
+    }
+    .modal-card {
+      background: #1a1a1a; color: #f3f3f3; border-radius: 14px;
+      padding: 22px 22px 18px; max-width: 360px; width: 100%;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      font-family: inherit;
+    }
+    .modal-card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+    .modal-card p  { margin: 0 0 18px; opacity: 0.78; font-size: 14px; line-height: 1.5; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    .modal-actions button {
+      padding: 9px 16px; border-radius: 999px; border: 0; cursor: pointer;
+      font: inherit; font-size: 14px;
+    }
+    .modal-actions .btn-secondary {
+      background: transparent; color: #ddd; border: 1px solid rgba(255,255,255,0.18);
+    }
+    .modal-actions .btn-primary {
+      background: #d97706; color: #fff;
+    }
+    .modal-actions button:hover { filter: brightness(1.1); }
+  `;
+  document.head.appendChild(css);
+}
+
+function confirmReturning(displayName, joinedLabel) {
+  injectConfirmStyles();
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <h3>Welcome back?</h3>
+        <p>
+          Someone named <strong class="mc-name"></strong>${joinedLabel ? ` joined on <strong>${joinedLabel}</strong>` : ' is already in the community'}.
+          Is that you? Continuing will load that history and add today's rounds to it.
+        </p>
+        <div class="modal-actions">
+          <button class="btn-secondary" data-act="no">No, that's someone else</button>
+          <button class="btn-primary"   data-act="yes">Yes, that's me</button>
+        </div>
+      </div>
+    `;
+    // Display name set safely (it's user input).
+    backdrop.querySelector('.mc-name').textContent = displayName;
+
+    backdrop.addEventListener('click', (e) => {
+      const act = e.target.closest('button')?.dataset.act;
+      if (!act) return;
+      document.body.removeChild(backdrop);
+      resolve(act === 'yes');
+    });
+
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('[data-act="yes"]').focus();
+  });
+}
+
+// ----- Leaderboard chrome (unchanged from v2) -------------------------------
 
 function ensureLeaderboardChrome() {
   if (document.getElementById('lb-tabs')) return;
-
   const header = document.querySelector('.leaderboard-header');
   if (!header) return;
 
@@ -195,8 +290,6 @@ function ensureLeaderboardChrome() {
   header.after(rangeTabs);
   rangeTabs.after(viewSwitch);
 
-  // Inline styles so this works without touching style.css. Lift into the
-  // stylesheet later if you want.
   const css = document.createElement('style');
   css.textContent = `
     .lb-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 8px; }
@@ -226,7 +319,6 @@ function ensureLeaderboardChrome() {
     renderTabs();
     renderLeaderboard();
   });
-
   viewSwitch.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-view]');
     if (!btn) return;
@@ -239,7 +331,6 @@ function ensureLeaderboardChrome() {
 function renderTabs() {
   document.querySelectorAll('.lb-tab').forEach((b) => {
     b.classList.toggle('active', b.dataset.range === session.range);
-    // Streaks view ignores the range, so dim range tabs in that mode.
     b.style.visibility = session.view === 'streaks' ? 'hidden' : 'visible';
   });
   document.querySelectorAll('.lb-view').forEach((b) => {
@@ -247,41 +338,30 @@ function renderTabs() {
   });
 }
 
-// ----- Data cache: fetched once per refresh, indexed for fast rendering -----
+// ----- Data cache + aggregations (unchanged from v2) ------------------------
 
-let cache = {
-  // byUser[userId] = { userId, name, days: Map<dateYmd, count> }
-  byUser: new Map(),
-  fetchedAt: 0,
-};
+let cache = { byUser: new Map(), fetchedAt: 0 };
 
 async function loadAndIndex() {
   const all = await api.allRounds();
   const byUser = new Map();
-
   for (const [, rec] of Object.entries(all)) {
     if (!rec || typeof rec.count !== 'number' || !rec.userId || !rec.date) continue;
-    if (rec.count <= 0) continue; // zero days don't extend streaks or totals
-
+    if (rec.count <= 0) continue;
     let u = byUser.get(rec.userId);
     if (!u) {
-      u = { userId: rec.userId, name: rec.name || 'Unknown', days: new Map(), _lastNameAt: '' };
+      u = { userId: rec.userId, name: rec.name || rec.userId, days: new Map(), _lastNameAt: '' };
       byUser.set(rec.userId, u);
     }
-    // If a user's name changes over time, prefer the most-recent label.
     if (rec.name && (rec.updatedAt || '') > u._lastNameAt) {
       u.name = rec.name;
       u._lastNameAt = rec.updatedAt || '';
     }
     u.days.set(rec.date, rec.count);
   }
-
   cache = { byUser, fetchedAt: Date.now() };
 }
 
-// ----- Aggregations ---------------------------------------------------------
-
-/** Sum each user's rounds within [from, to] inclusive. from=null => all-time. */
 function totalsForRange(from, to) {
   const rows = [];
   for (const u of cache.byUser.values()) {
@@ -295,49 +375,24 @@ function totalsForRange(from, to) {
     }
     if (sum > 0) rows.push({ userId: u.userId, name: u.name, count: sum, lastActive });
   }
-  // Higher count first; ties broken by who reached it earlier.
   rows.sort((a, b) => (b.count - a.count) || a.lastActive.localeCompare(b.lastActive));
   return rows;
 }
 
-/**
- * Streaks for one user.
- *
- * Rules (Duolingo-style):
- *   - "Day on" = count > 0 on that local date.
- *   - Current streak counts consecutive days ending at today OR yesterday.
- *     Today not yet chanted does NOT break the streak; only finishing
- *     yesterday at zero does.
- *   - Longest = longest run anywhere in history.
- */
 function streakFor(user) {
   if (!user.days.size) return { current: 0, longest: 0, lastActive: '' };
-
-  const sorted = [...user.days.keys()].sort(); // YMD strings sort correctly
+  const sorted = [...user.days.keys()].sort();
   const lastActive = sorted[sorted.length - 1];
-
-  // Longest: walk and reset on any gap != 1.
-  let longest = 1;
-  let run = 1;
+  let longest = 1, run = 1;
   for (let i = 1; i < sorted.length; i++) {
     const gap = dayDiff(sorted[i], sorted[i - 1]);
-    if (gap === 1) {
-      run += 1;
-      if (run > longest) longest = run;
-    } else {
-      run = 1;
-    }
+    if (gap === 1) { run += 1; if (run > longest) longest = run; }
+    else run = 1;
   }
-
-  // Current: anchor at today if active today, else yesterday, else 0.
   const today = todayLocal();
   let anchor;
   if (user.days.has(today)) anchor = today;
-  else {
-    const y = daysAgoLocal(1);
-    anchor = user.days.has(y) ? y : null;
-  }
-
+  else { const y = daysAgoLocal(1); anchor = user.days.has(y) ? y : null; }
   let current = 0;
   if (anchor) {
     let cursor = anchor;
@@ -349,7 +404,6 @@ function streakFor(user) {
       cursor = ymd(prev);
     }
   }
-
   return { current, longest, lastActive };
 }
 
@@ -371,10 +425,8 @@ function streakRows() {
 // ----- Render ---------------------------------------------------------------
 
 function renderCommunity() {
-  // "Community Today" card stays today-only — it's the live pulse.
   const today = todayLocal();
-  let totalRounds = 0;
-  let devotees = 0;
+  let totalRounds = 0, devotees = 0;
   for (const u of cache.byUser.values()) {
     const c = u.days.get(today);
     if (c > 0) { totalRounds += c; devotees += 1; }
@@ -386,21 +438,17 @@ function renderCommunity() {
 function renderLeaderboard() {
   ensureLeaderboardChrome();
   renderTabs();
-
   if (session.view === 'streaks') {
-    renderRows(
-      streakRows(),
+    renderRows(streakRows(),
       (r) => `${r.current}🔥<span class="lb-secondary">best ${r.longest}</span>`,
-      'streak'
-    );
+      'streak');
     return;
   }
-
   const to = todayLocal();
   let from;
   switch (session.range) {
     case 'today': from = to; break;
-    case '7d':    from = daysAgoLocal(6); break;   // rolling 7 incl. today
+    case '7d':    from = daysAgoLocal(6); break;
     case '30d':   from = daysAgoLocal(29); break;
     case 'all':   from = null; break;
     default:      from = to;
@@ -419,10 +467,9 @@ function renderRows(rows, rightHtml, emptyKind) {
     els.leaderboardList.innerHTML = `<div class="loading-state">${empty}</div>`;
     return;
   }
-
   els.leaderboardList.innerHTML = '';
   rows.slice(0, 20).forEach((r, i) => {
-    const isMe = r.userId === session.userId;
+    const isMe = r.userId === session.userKey;
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
     const row = document.createElement('div');
     row.className = 'leaderboard-row' + (isMe ? ' me' : '');
@@ -431,7 +478,6 @@ function renderRows(rows, rightHtml, emptyKind) {
       <span class="name"></span>
       <span class="count">${rightHtml(r)}</span>
     `;
-    // Name is user input — always set via textContent.
     row.querySelector('.name').textContent = r.name + (isMe ? ' (you)' : '');
     els.leaderboardList.appendChild(row);
   });
@@ -469,18 +515,17 @@ async function changeRound(delta) {
   if (delta > 0) showEncouragement(nextCount);
 
   try {
-    await api.putRounds(date, session.userId, {
-      userId: session.userId,
-      name: session.name,
+    await api.putRounds(date, session.userKey, {
+      userId: session.userKey,         // lowercased identity
+      name: session.name,              // original-case display
       date,
       count: nextCount,
       updatedAt: new Date().toISOString(),
     });
-    // Mirror the change into the in-memory index so boards update instantly.
-    let u = cache.byUser.get(session.userId);
+    let u = cache.byUser.get(session.userKey);
     if (!u) {
-      u = { userId: session.userId, name: session.name, days: new Map(), _lastNameAt: '' };
-      cache.byUser.set(session.userId, u);
+      u = { userId: session.userKey, name: session.name, days: new Map(), _lastNameAt: '' };
+      cache.byUser.set(session.userKey, u);
     }
     if (nextCount > 0) u.days.set(date, nextCount);
     else u.days.delete(date);
@@ -497,7 +542,7 @@ async function changeRound(delta) {
 // ----- Loaders --------------------------------------------------------------
 
 async function loadMyCount() {
-  const rec = await api.getRounds(todayLocal(), session.userId);
+  const rec = await api.getRounds(todayLocal(), session.userKey);
   session.myCount = rec?.count ?? 0;
   renderMyCount();
 }
@@ -510,9 +555,8 @@ async function refreshAll() {
     renderLeaderboard();
     const now = new Date();
     els.refreshStatus.textContent =
-      'updated ' +
-      String(now.getHours()).padStart(2, '0') + ':' +
-      String(now.getMinutes()).padStart(2, '0');
+      'updated ' + String(now.getHours()).padStart(2, '0') + ':' +
+                   String(now.getMinutes()).padStart(2, '0');
   } catch (err) {
     console.error(err);
     els.refreshStatus.textContent = 'offline';
@@ -544,33 +588,80 @@ function showAppScreen() {
   els.displayUsername.textContent = session.name;
 }
 
+/**
+ * The new join flow:
+ *   1. Validate name (regex).
+ *   2. Look up the user by lookupKey.
+ *      a) Not found → register (POST /users) → log in.
+ *      b) Found     → ask "is this you?" If yes, log in. If no, ask for a
+ *                     different name.
+ *   3. On login, persist {userKey, displayName} in localStorage.
+ *
+ * "Log in" here is purely client-side: we trust the user when they say yes.
+ * The server has no concept of authentication.
+ */
 async function handleStart() {
-  const name = els.usernameInput.value.trim();
-  if (!name) { toast('Please enter your name', 'error'); els.usernameInput.focus(); return; }
+  const raw = els.usernameInput.value;
+  const displayName = raw.trim().replace(/\s+/g, ' ');
 
-  const userId = newUserId();
+  if (!USERNAME_RE.test(displayName)) {
+    toast('Name: 2–30 letters, digits, spaces, _ . -', 'error');
+    els.usernameInput.focus();
+    return;
+  }
+
+  const lookup = toLookupKey(displayName);
   els.startBtn.disabled = true;
+
   try {
-    await api.createUser(userId, name);
-    session.userId = userId;
-    session.name = name;
-    localStorage.setItem(LS_USER_ID, userId);
-    localStorage.setItem(LS_USER_NAME, name);
+    const existing = await api.getUser(lookup);
+
+    if (existing) {
+      const joined = formatJoined(existing.createdAt);
+      const isMe = await confirmReturning(existing.displayName || displayName, joined);
+      if (!isMe) {
+        toast('Pick a different name then', 'info');
+        els.usernameInput.focus();
+        els.usernameInput.select();
+        return;
+      }
+      // Continuing as the existing user — prefer their stored display casing.
+      session.userKey = lookup;
+      session.name = existing.displayName || displayName;
+    } else {
+      // Fresh registration.
+      const created = await api.createUser(lookup, displayName);
+      if (created === null) {
+        // 409: someone took the name between our GET and POST. Re-fetch and
+        // funnel through the "is this you?" path.
+        const fresh = await api.getUser(lookup);
+        const isMe = fresh ? await confirmReturning(fresh.displayName || displayName, formatJoined(fresh.createdAt)) : true;
+        if (!isMe) { toast('Pick a different name then', 'info'); return; }
+        session.userKey = lookup;
+        session.name = fresh?.displayName || displayName;
+      } else {
+        session.userKey = lookup;
+        session.name = displayName;
+      }
+    }
+
+    localStorage.setItem(LS_USER_KEY, session.userKey);
+    localStorage.setItem(LS_USER_NAME, session.name);
     showAppScreen();
     await refreshAll();
     startAutoRefresh();
   } catch (err) {
     console.error(err);
-    toast('Could not reach the server. Is the backend running?', 'error');
+    toast('Could not reach the server. Is the backend up?', 'error');
   } finally {
     els.startBtn.disabled = false;
   }
 }
 
 function handleChangeUser() {
-  localStorage.removeItem(LS_USER_ID);
+  localStorage.removeItem(LS_USER_KEY);
   localStorage.removeItem(LS_USER_NAME);
-  session.userId = null;
+  session.userKey = null;
   session.name = null;
   session.myCount = 0;
   stopAutoRefresh();
@@ -588,10 +679,9 @@ function stopAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
 }
-
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopAutoRefresh();
-  else if (session.userId) { refreshAll(); startAutoRefresh(); }
+  else if (session.userKey) { refreshAll(); startAutoRefresh(); }
 });
 
 // ----- Wire-up --------------------------------------------------------------
@@ -608,7 +698,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
-  if (session.userId && session.name) {
+  if (session.userKey && session.name) {
     showAppScreen();
     await refreshAll();
     startAutoRefresh();
