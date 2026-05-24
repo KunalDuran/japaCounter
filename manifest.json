@@ -1,0 +1,25 @@
+{
+  "name": "Naam Jap — Daily Chanting Tracker",
+  "short_name": "Naam Jap",
+  "description": "Track your daily chanting rounds with the community",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FFF8EF",
+  "theme_color": "#E07B39",
+  "orientation": "portrait-primary",
+  "categories": ["lifestyle", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}
