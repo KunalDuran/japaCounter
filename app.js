@@ -98,18 +98,28 @@ const api = {
     return res.json();
   },
 
-  async createUser(userKey, displayName) {
+  async createUser(userKey, displayName, pin = '0000') {
     const res = await fetch(`${API_BASE}/collections/users`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         key: userKey,
-        value: { displayName, createdAt: new Date().toISOString() },
+        value: { displayName, pin, createdAt: new Date().toISOString() },
       }),
     });
     // 409 means it appeared between our GET and POST (race). Treat as "exists".
     if (res.status === 409) return null;
     if (!res.ok) throw new Error(`createUser ${res.status}`);
+    return res.json();
+  },
+
+  async updateUser(userKey, value) {
+    const res = await fetch(`${API_BASE}/collections/users/${encodeURIComponent(userKey)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(value),
+    });
+    if (!res.ok) throw new Error(`updateUser ${res.status}`);
     return res.json();
   },
 
@@ -215,11 +225,7 @@ function toast(message, kind = 'info') {
   toast._timer = setTimeout(() => (t.style.opacity = '0'), 2200);
 }
 
-// ----- "Is this you?" dialog ------------------------------------------------
-//
-// Built in JS so index.html doesn't need new structural elements. The
-// returned Promise resolves to true (yes, it's me) or false (no, different
-// person).
+// ----- PIN dialog -----------------------------------------------------------
 
 function injectConfirmStyles() {
   if (document.getElementById('confirm-styles')) return;
@@ -238,8 +244,8 @@ function injectConfirmStyles() {
       font-family: inherit;
     }
     .modal-card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
-    .modal-card p  { margin: 0 0 18px; opacity: 0.78; font-size: 14px; line-height: 1.5; }
-    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    .modal-card p  { margin: 0 0 4px; opacity: 0.78; font-size: 14px; line-height: 1.5; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 8px; }
     .modal-actions button {
       padding: 9px 16px; border-radius: 999px; border: 0; cursor: pointer;
       font: inherit; font-size: 14px;
@@ -247,44 +253,129 @@ function injectConfirmStyles() {
     .modal-actions .btn-secondary {
       background: transparent; color: #ddd; border: 1px solid rgba(255,255,255,0.18);
     }
-    .modal-actions .btn-primary {
-      background: #d97706; color: #fff;
-    }
+    .modal-actions .btn-primary { background: #d97706; color: #fff; }
     .modal-actions button:hover { filter: brightness(1.1); }
+    .pin-boxes { display: flex; gap: 12px; justify-content: center; margin: 18px 0 4px; }
+    .pin-box {
+      width: 52px; height: 60px;
+      border: 2px solid rgba(255,255,255,0.18); border-radius: 10px;
+      background: rgba(255,255,255,0.06); color: #f3f3f3;
+      font-size: 24px; font-weight: 600; text-align: center;
+      caret-color: transparent; outline: none;
+      -webkit-appearance: none; appearance: none;
+      transition: border-color 160ms;
+    }
+    .pin-box:focus { border-color: #d97706; }
+    .pin-box.filled { border-color: rgba(255,255,255,0.35); }
+    .pin-error { color: #f87171; font-size: 13px; text-align: center; min-height: 18px; }
+    .pin-not-me { text-align: center; margin: 8px 0 0; }
+    .pin-not-me-btn {
+      background: none; border: 0; color: rgba(255,255,255,0.38); font: inherit;
+      font-size: 12px; cursor: pointer; padding: 2px 0;
+      text-decoration: underline; text-underline-offset: 3px;
+    }
+    .pin-not-me-btn:hover { color: rgba(255,255,255,0.65); }
   `;
   document.head.appendChild(css);
 }
 
-function confirmReturning(displayName, joinedLabel) {
+/**
+ * Renders a 4-digit PIN entry modal.
+ * Resolves with a 4-char string, null (cancelled), or '0000' (skipped).
+ *
+ * @param {object} opts
+ * @param {string}  opts.title
+ * @param {string}  opts.subtitle
+ * @param {string}  [opts.confirmLabel]
+ * @param {string}  [opts.skipLabel]   — shows a skip button that resolves '0000'
+ * @param {boolean} [opts.showCancel]  — default true
+ * @param {string}  [opts.notMeLabel] — shows a subtle "not me" link, resolves 'not-me'
+ */
+function showPinDialog({ title, subtitle, confirmLabel = 'Continue', skipLabel, showCancel = true, notMeLabel }) {
   injectConfirmStyles();
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
+    const cancelHtml = showCancel
+      ? `<button class="btn-secondary" data-act="cancel">Cancel</button>` : '';
+    const skipHtml = skipLabel
+      ? `<button class="btn-secondary" data-act="skip">${skipLabel}</button>` : '';
+    const notMeHtml = notMeLabel
+      ? `<p class="pin-not-me"><button class="pin-not-me-btn" data-act="not-me"></button></p>` : '';
     backdrop.innerHTML = `
       <div class="modal-card" role="dialog" aria-modal="true">
-        <h3>Welcome back?</h3>
-        <p>
-          Someone named <strong class="mc-name"></strong>${joinedLabel ? ` joined on <strong>${joinedLabel}</strong>` : ' is already in the community'}.
-          Is that you? Continuing will load that history and add today's rounds to it.
-        </p>
+        <h3 class="mc-title"></h3>
+        <p class="mc-sub"></p>
+        <div class="pin-boxes">
+          <input class="pin-box" type="tel" inputmode="numeric" maxlength="1" autocomplete="off">
+          <input class="pin-box" type="tel" inputmode="numeric" maxlength="1" autocomplete="off">
+          <input class="pin-box" type="tel" inputmode="numeric" maxlength="1" autocomplete="off">
+          <input class="pin-box" type="tel" inputmode="numeric" maxlength="1" autocomplete="off">
+        </div>
+        <div class="pin-error"></div>
+        ${notMeHtml}
         <div class="modal-actions">
-          <button class="btn-secondary" data-act="no">No, that's someone else</button>
-          <button class="btn-primary"   data-act="yes">Yes, that's me</button>
+          ${cancelHtml}
+          ${skipHtml}
+          <button class="btn-primary" data-act="confirm">${confirmLabel}</button>
         </div>
       </div>
     `;
-    // Display name set safely (it's user input).
-    backdrop.querySelector('.mc-name').textContent = displayName;
+    if (notMeLabel) backdrop.querySelector('.pin-not-me-btn').textContent = notMeLabel;
+    backdrop.querySelector('.mc-title').textContent = title;
+    backdrop.querySelector('.mc-sub').textContent = subtitle;
+
+    const boxes = [...backdrop.querySelectorAll('.pin-box')];
+    const errEl = backdrop.querySelector('.pin-error');
+
+    boxes.forEach((box, i) => {
+      box.addEventListener('input', () => {
+        const v = box.value.replace(/\D/g, '');
+        box.value = v ? v[v.length - 1] : '';
+        box.classList.toggle('filled', !!box.value);
+        errEl.textContent = '';
+        if (box.value && i < 3) boxes[i + 1].focus();
+      });
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !box.value && i > 0) {
+          boxes[i - 1].value = '';
+          boxes[i - 1].classList.remove('filled');
+          boxes[i - 1].focus();
+        }
+        if (e.key === 'Enter') doConfirm();
+      });
+      box.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData)
+          .getData('text').replace(/\D/g, '').slice(0, 4);
+        text.split('').forEach((ch, j) => {
+          if (boxes[j]) { boxes[j].value = ch; boxes[j].classList.add('filled'); }
+        });
+        boxes[Math.min(text.length, 3)].focus();
+      });
+    });
+
+    function getPin() { return boxes.map((b) => b.value).join(''); }
+
+    function doConfirm() {
+      const pin = getPin();
+      if (pin.length < 4) { errEl.textContent = 'Enter all 4 digits'; return; }
+      cleanup();
+      resolve(pin);
+    }
+
+    function cleanup() { if (backdrop.parentNode) document.body.removeChild(backdrop); }
 
     backdrop.addEventListener('click', (e) => {
       const act = e.target.closest('button')?.dataset.act;
-      if (!act) return;
-      document.body.removeChild(backdrop);
-      resolve(act === 'yes');
+      if (act === 'confirm') doConfirm();
+      else if (act === 'cancel') { cleanup(); resolve(null); }
+      else if (act === 'skip')   { cleanup(); resolve('0000'); }
+      else if (act === 'not-me') { cleanup(); resolve('not-me'); }
     });
 
     document.body.appendChild(backdrop);
-    backdrop.querySelector('[data-act="yes"]').focus();
+    boxes[0].focus();
   });
 }
 
@@ -997,6 +1088,34 @@ function bindBeadsPageEvents() {
 
 // ----- Setup / change-user --------------------------------------------------
 
+// ----- Setup-screen live name lookup ----------------------------------------
+
+let _lookupTimer = null;
+
+function setLookupHint(status) {
+  let hint = document.getElementById('setup-hint');
+  if (!hint) {
+    hint = document.createElement('p');
+    hint.id = 'setup-hint';
+    hint.setAttribute('aria-live', 'polite');
+    Object.assign(hint.style, {
+      fontSize: '13px', margin: '6px 2px 0', minHeight: '20px',
+      transition: 'color 200ms',
+    });
+    els.usernameInput.insertAdjacentElement('afterend', hint);
+  }
+  const states = {
+    idle:     { text: '',                                                 color: 'transparent',              btn: 'Begin Sadhana 🙏' },
+    checking: { text: 'Checking…',                                        color: 'rgba(255,255,255,0.35)',    btn: 'Begin Sadhana 🙏' },
+    found:    { text: '✓ Account found — log in with your PIN',           color: '#86efac',                  btn: 'Log in →' },
+    new:      { text: '✦ Name available — a new account will be created', color: 'rgba(255,255,255,0.45)',   btn: 'Create Account →' },
+  };
+  const s = states[status] || states.idle;
+  hint.textContent = s.text;
+  hint.style.color = s.color;
+  els.startBtn.textContent = s.btn;
+}
+
 function showSetupScreen() {
   els.setupScreen.classList.remove('hidden');
   els.appScreen.classList.add('hidden');
@@ -1004,6 +1123,8 @@ function showSetupScreen() {
   els.bottomNav.classList.add('hidden');
   document.body.classList.remove('beads-mode');
   els.usernameInput.value = '';
+  clearTimeout(_lookupTimer);
+  setLookupHint('idle');
   els.usernameInput.focus();
 }
 
@@ -1021,18 +1142,6 @@ function showAppScreen() {
   session.page = 'home';
 }
 
-/**
- * The new join flow:
- *   1. Validate name (regex).
- *   2. Look up the user by lookupKey.
- *      a) Not found → register (POST /users) → log in.
- *      b) Found     → ask "is this you?" If yes, log in. If no, ask for a
- *                     different name.
- *   3. On login, persist {userKey, displayName} in localStorage.
- *
- * "Log in" here is purely client-side: we trust the user when they say yes.
- * The server has no concept of authentication.
- */
 async function handleStart() {
   const raw = els.usernameInput.value;
   const displayName = raw.trim().replace(/\s+/g, ' ');
@@ -1050,26 +1159,59 @@ async function handleStart() {
     const existing = await api.getUser(lookup);
 
     if (existing) {
-      const joined = formatJoined(existing.createdAt);
-      const isMe = await confirmReturning(existing.displayName || displayName, joined);
-      if (!isMe) {
-        toast('Pick a different name then', 'info');
+      // Verify PIN — existing users without a PIN default to '0000'.
+      const storedPin = existing.pin || '0000';
+      const entered = await showPinDialog({
+        title: `Welcome back, ${existing.displayName || displayName}`,
+        subtitle: 'Enter your 4-digit PIN to continue',
+        confirmLabel: 'Log in',
+        notMeLabel: 'Not my account — try a different name',
+      });
+      if (entered === 'not-me') {
+        els.usernameInput.value = '';
+        setLookupHint('idle');
         els.usernameInput.focus();
-        els.usernameInput.select();
         return;
       }
-      // Continuing as the existing user — prefer their stored display casing.
+      if (entered === null) {
+        els.usernameInput.focus();
+        return;
+      }
+      if (entered !== storedPin) {
+        toast('Incorrect PIN — if this isn\'t your account, try a different name', 'error');
+        els.usernameInput.focus();
+        return;
+      }
       session.userKey = lookup;
       session.name = existing.displayName || displayName;
     } else {
-      // Fresh registration.
-      const created = await api.createUser(lookup, displayName);
+      // Fresh registration — let the user set a PIN (default 0000).
+      const pin = await showPinDialog({
+        title: 'Set your PIN',
+        subtitle: 'Choose a 4-digit PIN to protect your account',
+        confirmLabel: 'Set PIN',
+        skipLabel: 'Skip (use 0000)',
+        showCancel: false,
+      });
+      if (pin === null) return;
+
+      const created = await api.createUser(lookup, displayName, pin);
       if (created === null) {
-        // 409: someone took the name between our GET and POST. Re-fetch and
-        // funnel through the "is this you?" path.
+        // 409 race — someone registered the name between our GET and POST.
         const fresh = await api.getUser(lookup);
-        const isMe = fresh ? await confirmReturning(fresh.displayName || displayName, formatJoined(fresh.createdAt)) : true;
-        if (!isMe) { toast('Pick a different name then', 'info'); return; }
+        if (fresh) {
+          const storedPin = fresh.pin || '0000';
+          const entered = await showPinDialog({
+            title: `Welcome back, ${fresh.displayName || displayName}`,
+            subtitle: 'Enter your 4-digit PIN to continue',
+            confirmLabel: 'Continue',
+          });
+          if (entered === null || entered !== storedPin) {
+            toast(entered === null ? 'Cancelled' : 'Incorrect PIN',
+                  entered === null ? 'info' : 'error');
+            return;
+          }
+        }
         session.userKey = lookup;
         session.name = fresh?.displayName || displayName;
       } else {
@@ -1099,6 +1241,42 @@ function handleChangeUser() {
   showSetupScreen();
 }
 
+async function changePinFlow() {
+  try {
+    const user = await api.getUser(session.userKey);
+    const currentStoredPin = user?.pin || '0000';
+
+    const current = await showPinDialog({
+      title: 'Change PIN',
+      subtitle: 'Enter your current PIN',
+      confirmLabel: 'Next',
+    });
+    if (current === null) return;
+    if (current !== currentStoredPin) { toast('Incorrect PIN', 'error'); return; }
+
+    const next = await showPinDialog({
+      title: 'New PIN',
+      subtitle: 'Choose a new 4-digit PIN',
+      confirmLabel: 'Next',
+    });
+    if (next === null) return;
+
+    const confirm = await showPinDialog({
+      title: 'Confirm PIN',
+      subtitle: 'Re-enter your new PIN to confirm',
+      confirmLabel: 'Save',
+    });
+    if (confirm === null) return;
+    if (next !== confirm) { toast('PINs do not match — try again', 'error'); return; }
+
+    await api.updateUser(session.userKey, { ...user, pin: next });
+    toast('PIN updated');
+  } catch (err) {
+    console.error(err);
+    toast('Could not update PIN', 'error');
+  }
+}
+
 // ----- Visibility-based refresh (no polling interval) -----------------------
 
 document.addEventListener('visibilitychange', () => {
@@ -1109,6 +1287,20 @@ document.addEventListener('visibilitychange', () => {
 
 function bindEvents() {
   els.startBtn.addEventListener('click', handleStart);
+  els.usernameInput.addEventListener('input', () => {
+    clearTimeout(_lookupTimer);
+    const raw = els.usernameInput.value.trim().replace(/\s+/g, ' ');
+    if (!USERNAME_RE.test(raw)) { setLookupHint('idle'); return; }
+    setLookupHint('checking');
+    _lookupTimer = setTimeout(async () => {
+      try {
+        const exists = await api.getUser(toLookupKey(raw));
+        // Only update if the input hasn't changed while waiting
+        const current = els.usernameInput.value.trim().replace(/\s+/g, ' ');
+        if (current === raw) setLookupHint(exists ? 'found' : 'new');
+      } catch { setLookupHint('idle'); }
+    }, 400);
+  });
   els.usernameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleStart();
   });
@@ -1352,13 +1544,16 @@ function openHomeSheet() {
         <input type="time" data-act="time" value="${reminder.time}" ${reminder.enabled ? '' : 'disabled'}>
       </div>
 
-      // <div class="home-sheet-row">
-      //   <span class="row-label">
-      //     <span>Test reminder</span>
-      //     <span class="row-hint">Send a notification right now</span>
-      //   </span>
-      //   <button class="ghost-btn" data-act="test" ${supported && !denied ? '' : 'disabled'}>Send test</button>
-      // </div>
+      ${false ?
+      `<div class="home-sheet-row">
+        <span class="row-label">
+          <span>Test reminder</span>
+          <span class="row-hint">Send a notification right now</span>
+        </span>
+        <button class="ghost-btn" data-act="test" ${supported && !denied ? '' : 'disabled'}>Send test</button>
+      </div>` : ''
+      }
+
 
       ${
         !supported
@@ -1369,6 +1564,14 @@ function openHomeSheet() {
               ? `<div class="sheet-status">Best-effort reminders: works on Android Chrome reliably. On iOS, fires only when the app is open or in the background briefly.</div>`
               : `<div class="sheet-status">Scheduled alarms enabled — reminders will fire even if the app is closed.</div>`
       }
+
+      <div class="home-sheet-row">
+        <span class="row-label">
+          <span>PIN</span>
+          <span class="row-hint">4-digit code to protect your account</span>
+        </span>
+        <button class="ghost-btn" data-act="change-pin">Change</button>
+      </div>
 
       <div class="sheet-close-row">
         <button data-act="close">Close</button>
@@ -1383,6 +1586,12 @@ function openHomeSheet() {
 
     if (act === 'close') {
       document.body.removeChild(sheet);
+      return;
+    }
+
+    if (act === 'change-pin') {
+      document.body.removeChild(sheet);
+      await changePinFlow();
       return;
     }
 
