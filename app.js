@@ -1352,13 +1352,13 @@ function openHomeSheet() {
         <input type="time" data-act="time" value="${reminder.time}" ${reminder.enabled ? '' : 'disabled'}>
       </div>
 
-      <div class="home-sheet-row">
-        <span class="row-label">
-          <span>Test reminder</span>
-          <span class="row-hint">Send a notification right now</span>
-        </span>
-        <button class="ghost-btn" data-act="test" ${supported && !denied ? '' : 'disabled'}>Send test</button>
-      </div>
+      // <div class="home-sheet-row">
+      //   <span class="row-label">
+      //     <span>Test reminder</span>
+      //     <span class="row-hint">Send a notification right now</span>
+      //   </span>
+      //   <button class="ghost-btn" data-act="test" ${supported && !denied ? '' : 'disabled'}>Send test</button>
+      // </div>
 
       ${
         !supported
