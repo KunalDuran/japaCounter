@@ -1138,3 +1138,327 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+
+// ============================================================================
+// SELF-REMINDERS
+// ----------------------------------------------------------------------------
+// Local daily reminder at user-chosen time. No backend, no push.
+//
+// Three execution paths, in order of reliability:
+//   1) Notification Triggers API  (Chrome/Edge Android only): true wake-up.
+//   2) Service worker fallback   : SW periodically checks if it's time.
+//   3) Foreground setTimeout     : works while the tab/PWA is open.
+//
+// We always set up paths 2+3. Path 1 is added on top when supported.
+// ============================================================================
+
+const LS_REMIND_ON   = 'japa.remindOn';
+const LS_REMIND_TIME = 'japa.remindTime';      // "HH:MM"
+const LS_REMIND_LAST = 'japa.remindLastFired'; // "YYYY-MM-DD"
+
+const reminder = {
+  enabled: localStorage.getItem(LS_REMIND_ON) === '1',
+  time: localStorage.getItem(LS_REMIND_TIME) || '06:00',
+};
+
+// --- Permission ---
+
+function notificationPermission() {
+  if (!('Notification' in window)) return 'unsupported';
+  return Notification.permission; // 'default' | 'granted' | 'denied'
+}
+
+async function requestNotificationPermission() {
+  if (!('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  try {
+    const r = await Notification.requestPermission();
+    return r;
+  } catch {
+    return 'denied';
+  }
+}
+
+// --- Time math ---
+
+function nextReminderDate(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function reminderCopy() {
+  // Streak-aware where possible, devotional otherwise.
+  const u = cache?.byUser?.get(session.userKey);
+  if (u) {
+    const s = streakFor(u);
+    if (s.current >= 2) {
+      return {
+        title: `🔥 ${s.current}-day streak`,
+        body: `Keep it alive — chant today, ${session.name}`,
+      };
+    }
+  }
+  return {
+    title: '🕉 Time for your sadhana',
+    body: `Hare Krishna, ${session.name || 'devotee'} — your mala is waiting`,
+  };
+}
+
+// --- The actual show ---
+
+async function showReminderNow() {
+  // Skip if already chanted today
+  if (session.myCount > 0) return false;
+
+  const today = todayLocal();
+  if (localStorage.getItem(LS_REMIND_LAST) === today) return false; // already fired today
+
+  if (notificationPermission() !== 'granted') return false;
+
+  const { title, body } = reminderCopy();
+  const opts = {
+    body,
+    icon: '/icon-192.png',   // adjust to your manifest icon
+    badge: '/icon-192.png',
+    tag: 'japa-daily-reminder',
+    renotify: false,
+    data: { kind: 'daily-reminder', url: '/' },
+  };
+
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg) {
+      await reg.showNotification(title, opts);
+    } else if ('Notification' in window) {
+      new Notification(title, opts);
+    }
+    localStorage.setItem(LS_REMIND_LAST, today);
+    return true;
+  } catch (err) {
+    console.warn('reminder failed:', err);
+    return false;
+  }
+}
+
+// --- Scheduling ---
+
+// Path 1: Notification Triggers (Chrome Android). True alarm, works offline.
+async function scheduleNativeTrigger() {
+  if (!reminder.enabled) return false;
+  if (notificationPermission() !== 'granted') return false;
+
+  const reg = await navigator.serviceWorker?.getRegistration();
+  if (!reg || !('showTrigger' in Notification.prototype === false)) {
+    // Feature-detect properly via TimestampTrigger
+  }
+  if (typeof TimestampTrigger === 'undefined') return false;
+
+  const when = nextReminderDate(reminder.time);
+  const { title, body } = reminderCopy();
+
+  try {
+    // Clear any previously scheduled trigger with same tag
+    const existing = await reg.getNotifications({ tag: 'japa-daily-reminder', includeTriggered: false });
+    existing.forEach((n) => n.close());
+
+    await reg.showNotification(title, {
+      body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: 'japa-daily-reminder',
+      showTrigger: new TimestampTrigger(when.getTime()),
+      data: { kind: 'daily-reminder', url: '/' },
+    });
+    return true;
+  } catch (err) {
+    console.warn('native trigger failed:', err);
+    return false;
+  }
+}
+
+// Path 3: foreground timer. Fires while the page is open.
+let foregroundTimer = null;
+function scheduleForegroundCheck() {
+  if (foregroundTimer) clearTimeout(foregroundTimer);
+  if (!reminder.enabled) return;
+  const when = nextReminderDate(reminder.time);
+  const delay = when.getTime() - Date.now();
+  // Cap delay to ~6 hours so we re-check periodically even if user keeps tab open
+  const ms = Math.min(delay, 6 * 60 * 60 * 1000);
+  foregroundTimer = setTimeout(() => {
+    // If we've reached the actual time, fire. Otherwise just re-arm.
+    if (Date.now() >= when.getTime() - 1000) {
+      showReminderNow();
+    }
+    scheduleForegroundCheck();
+  }, ms);
+}
+
+// On every app load, check if we missed today's reminder (e.g. user opened
+// the app at 9 AM but reminder was set for 6 AM and didn't fire).
+async function maybeFireMissedReminder() {
+  if (!reminder.enabled) return;
+  if (notificationPermission() !== 'granted') return;
+
+  const [h, m] = reminder.time.split(':').map(Number);
+  const now = new Date();
+  const todayReminder = new Date();
+  todayReminder.setHours(h, m, 0, 0);
+
+  // If we're past today's reminder time AND haven't fired AND haven't chanted: nudge.
+  if (now.getTime() >= todayReminder.getTime()) {
+    await showReminderNow(); // it has its own "fired today" guard
+  }
+}
+
+async function applyReminderSchedule() {
+  await scheduleNativeTrigger();   // best-effort, no-op where unsupported
+  scheduleForegroundCheck();
+}
+
+// --- Settings UI ---
+
+function openHomeSheet() {
+  const sheet = document.createElement('div');
+  sheet.className = 'home-sheet';
+
+  const perm = notificationPermission();
+  const supported = perm !== 'unsupported';
+  const denied = perm === 'denied';
+
+  sheet.innerHTML = `
+    <div class="home-sheet-card" role="dialog" aria-modal="true">
+      <h4>Settings</h4>
+      <p class="sheet-sub">Daily nudge to keep your sadhana steady.</p>
+
+      <div class="home-sheet-row">
+        <span class="row-label">
+          <span>Daily reminder</span>
+          <span class="row-hint">Skipped if you've already chanted today</span>
+        </span>
+        <button class="toggle ${reminder.enabled ? 'on' : ''}" data-act="toggle" aria-label="Toggle reminder" ${supported && !denied ? '' : 'disabled'}></button>
+      </div>
+
+      <div class="home-sheet-row">
+        <span class="row-label">
+          <span>Time</span>
+          <span class="row-hint">Brahma muhurta is traditional — pick what works for you</span>
+        </span>
+        <input type="time" data-act="time" value="${reminder.time}" ${reminder.enabled ? '' : 'disabled'}>
+      </div>
+
+      <div class="home-sheet-row">
+        <span class="row-label">
+          <span>Test reminder</span>
+          <span class="row-hint">Send a notification right now</span>
+        </span>
+        <button class="ghost-btn" data-act="test" ${supported && !denied ? '' : 'disabled'}>Send test</button>
+      </div>
+
+      ${
+        !supported
+          ? `<div class="sheet-status warn">Your browser doesn't support notifications. Try Chrome on Android or Edge.</div>`
+          : denied
+            ? `<div class="sheet-status warn">Notifications are blocked. Enable them for this site in your browser settings.</div>`
+            : (typeof TimestampTrigger === 'undefined')
+              ? `<div class="sheet-status">Best-effort reminders: works on Android Chrome reliably. On iOS, fires only when the app is open or in the background briefly.</div>`
+              : `<div class="sheet-status">Scheduled alarms enabled — reminders will fire even if the app is closed.</div>`
+      }
+
+      <div class="sheet-close-row">
+        <button data-act="close">Close</button>
+      </div>
+    </div>
+  `;
+
+  sheet.addEventListener('click', async (e) => {
+    if (e.target === sheet) { document.body.removeChild(sheet); return; }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+
+    if (act === 'close') {
+      document.body.removeChild(sheet);
+      return;
+    }
+
+    if (act === 'toggle') {
+      if (!reminder.enabled) {
+        const p = await requestNotificationPermission();
+        if (p !== 'granted') {
+          toast(
+            p === 'denied'
+              ? 'Permission blocked — enable in browser settings'
+              : 'Notifications not available here',
+            'error'
+          );
+          return;
+        }
+        reminder.enabled = true;
+      } else {
+        reminder.enabled = false;
+        // Cancel any pending native trigger
+        try {
+          const reg = await navigator.serviceWorker?.getRegistration();
+          const pending = await reg?.getNotifications({ tag: 'japa-daily-reminder', includeTriggered: false }) || [];
+          pending.forEach((n) => n.close());
+        } catch {}
+      }
+      localStorage.setItem(LS_REMIND_ON, reminder.enabled ? '1' : '0');
+      e.target.classList.toggle('on', reminder.enabled);
+      sheet.querySelector('input[type="time"]').disabled = !reminder.enabled;
+      await applyReminderSchedule();
+      toast(reminder.enabled ? `Reminder set for ${reminder.time}` : 'Reminder off');
+    }
+
+    if (act === 'test') {
+      const p = await requestNotificationPermission();
+      if (p !== 'granted') {
+        toast('Permission needed for notifications', 'error');
+        return;
+      }
+      // Bypass the "already fired today" guard for the test
+      const last = localStorage.getItem(LS_REMIND_LAST);
+      localStorage.removeItem(LS_REMIND_LAST);
+      const myCountBackup = session.myCount;
+      session.myCount = 0; // bypass the "already chanted" guard
+      await showReminderNow();
+      session.myCount = myCountBackup;
+      if (last) localStorage.setItem(LS_REMIND_LAST, last);
+      else localStorage.removeItem(LS_REMIND_LAST);
+    }
+  });
+
+  sheet.addEventListener('change', async (e) => {
+    if (e.target.dataset.act === 'time') {
+      const val = e.target.value;
+      if (!/^\d{2}:\d{2}$/.test(val)) return;
+      reminder.time = val;
+      localStorage.setItem(LS_REMIND_TIME, val);
+      await applyReminderSchedule();
+      toast(`Reminder time updated to ${val}`);
+    }
+  });
+
+  document.body.appendChild(sheet);
+}
+
+// --- Wire-up ---
+
+(function initReminders() {
+  const btn = document.getElementById('home-menu-btn');
+  if (btn) btn.addEventListener('click', openHomeSheet);
+
+  // After the rest of init finishes, set up scheduling
+  // (waitASec ensures cache is populated for streak-aware copy)
+  setTimeout(async () => {
+    if (reminder.enabled && notificationPermission() === 'granted') {
+      await applyReminderSchedule();
+      await maybeFireMissedReminder();
+    }
+  }, 1500);
+})();

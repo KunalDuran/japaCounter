@@ -70,3 +70,18 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+// Open the app when the user clicks the reminder notification
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+      // Focus an existing window if we have one
+      for (const w of wins) {
+        if ('focus' in w) return w.focus();
+      }
+      // Otherwise open a new one
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
+});
