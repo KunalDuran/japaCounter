@@ -28,7 +28,6 @@
 // ----- Config ---------------------------------------------------------------
 
 const API_BASE = 'https://dyn.duranz.in';
-const REFRESH_MS = 15_000;
 const LS_USER_KEY = 'japa.userKey';        // lookup key (lowercased name)
 const LS_USER_NAME = 'japa.userName';      // original-case display name
 const LS_RANGE = 'japa.range';
@@ -728,14 +727,16 @@ function playMalaBell() {
 }
 
 // --- Haptics ---
+// navigator.vibrate is not supported on iOS Safari; disable gracefully.
+const supportsHaptics = typeof navigator.vibrate === 'function';
 
 function hapticBead() {
-  if (!session.hapticsOn) return;
-  if (navigator.vibrate) navigator.vibrate(18);
+  if (!session.hapticsOn || !supportsHaptics) return;
+  navigator.vibrate(18);
 }
 function hapticMala() {
-  if (!session.hapticsOn) return;
-  if (navigator.vibrate) navigator.vibrate([60, 40, 60, 40, 200]);
+  if (!session.hapticsOn || !supportsHaptics) return;
+  navigator.vibrate([60, 40, 60, 40, 200]);
 }
 
 // --- The core: advance one bead ---
@@ -916,8 +917,8 @@ function openBeadsSheet() {
         <button class="beads-sheet-toggle ${session.soundOn ? 'on' : ''}" data-act="sound" aria-label="Toggle sound"></button>
       </div>
       <div class="beads-sheet-row">
-        <span>Haptics</span>
-        <button class="beads-sheet-toggle ${session.hapticsOn ? 'on' : ''}" data-act="haptics" aria-label="Toggle haptics"></button>
+        <span>Haptics${supportsHaptics ? '' : ' <small style="opacity:0.5">(not supported on this device)</small>'}</span>
+        <button class="beads-sheet-toggle ${session.hapticsOn && supportsHaptics ? 'on' : ''}" data-act="haptics" aria-label="Toggle haptics" ${supportsHaptics ? '' : 'disabled style="opacity:0.35;cursor:not-allowed"'}></button>
       </div>
       <div class="beads-sheet-row">
         <span>Reset current round</span>
@@ -937,6 +938,7 @@ function openBeadsSheet() {
       localStorage.setItem(LS_SOUND_ON, session.soundOn ? '1' : '0');
       e.target.classList.toggle('on', session.soundOn);
     } else if (act === 'haptics') {
+      if (!supportsHaptics) return;
       session.hapticsOn = !session.hapticsOn;
       localStorage.setItem(LS_HAPTICS_ON, session.hapticsOn ? '1' : '0');
       e.target.classList.toggle('on', session.hapticsOn);
@@ -1080,7 +1082,6 @@ async function handleStart() {
     localStorage.setItem(LS_USER_NAME, session.name);
     showAppScreen();
     await refreshAll();
-    startAutoRefresh();
   } catch (err) {
     console.error(err);
     toast('Could not reach the server. Is the backend up?', 'error');
@@ -1095,24 +1096,13 @@ function handleChangeUser() {
   session.userKey = null;
   session.name = null;
   session.myCount = 0;
-  stopAutoRefresh();
   showSetupScreen();
 }
 
-// ----- Auto-refresh ---------------------------------------------------------
+// ----- Visibility-based refresh (no polling interval) -----------------------
 
-let refreshTimer = null;
-function startAutoRefresh() {
-  stopAutoRefresh();
-  refreshTimer = setInterval(refreshBoardsOnly, REFRESH_MS);
-}
-function stopAutoRefresh() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = null;
-}
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopAutoRefresh();
-  else if (session.userKey) { refreshAll(); startAutoRefresh(); }
+  if (!document.hidden && session.userKey) refreshAll();
 });
 
 // ----- Wire-up --------------------------------------------------------------
@@ -1133,7 +1123,6 @@ async function init() {
   if (session.userKey && session.name) {
     showAppScreen();
     await refreshAll();
-    startAutoRefresh();
   } else {
     showSetupScreen();
   }
